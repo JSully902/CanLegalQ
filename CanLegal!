@@ -1,0 +1,346 @@
+canada-legal-qa/
+│
+├── .env                # Your environment file (OpenAI API key, etc.)
+├── Dockerfile          # For containerizing the app
+├── README.md           
+├── package.json
+├── package-lock.json
+├── server.js
+├── routes/
+│   └── question.js
+├── services/
+│   ├── canliiService.js
+│   └── openAIService.js
+└── frontend/
+    ├── index.html
+    ├── style.css
+    └── script.js
+{
+  "name": "canada-legal-qa",
+  "version": "1.0.0",
+  "description": "A Canadian Legal Q&A prototype with OpenAI integration",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.3.4",
+    "cheerio": "^1.0.0-rc.12",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "openai": "^3.2.1"
+  }
+}
+OPENAI_API_KEY=YOUR_OPENAI_API_KEY
+require('dotenv').config(); // Loads variables from .env
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const questionRoute = require('./routes/question');
+
+const app = express();
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Serve the frontend folder
+app.use(express.static(path.join(__dirname, 'frontend')));
+
+// Our API route
+app.use('/api/question', questionRoute);
+
+// Fallback to index.html for any unknown paths
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
+});
+
+// Start the server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server is listening on port ${PORT}`);
+});
+const express = require('express');
+const router = express.Router();
+const canliiService = require('../services/canliiService');
+const openAIService = require('../services/openAIService');
+
+/**
+ * POST /api/question
+ * Body: { question: string }
+ * Returns: { answer: string, references: Array<{ title: string, url: string }> }
+ */
+router.post('/', async (req, res) => {
+  const { question } = req.body;
+
+  if (!question) {
+    return res.status(400).json({ error: 'No question provided' });
+  }
+
+  try {
+    // 1. Extract short keywords for searching CanLII
+    const keywords = question.split(' ').slice(0, 5).join(' ');
+
+    // 2. Get references from CanLII (cases, legislation, etc.)
+    const references = await canliiService.findReferences(keywords);
+
+    // 3. Use OpenAI to summarize an answer
+    const answer = await openAIService.summarize(question, references);
+
+    res.json({
+      answer,
+      references,
+    });
+  } catch (error) {
+    console.error('Error handling /api/question:', error);
+    res.status(500).json({ error: 'Something went wrong. Please try again later.' });
+  }
+});
+
+module.exports = router;
+const axios = require('axios');
+const cheerio = require('cheerio');
+
+/**
+ * Finds references on CanLII by scraping search results page.
+ * 
+ * @param {string} keywords - The keywords to search on CanLII.
+ * @returns {Promise<Array<{ title: string, url: string }>>}
+ */
+async function findReferences(keywords) {
+  // Basic search URL
+  const searchUrl = `https://www.canlii.org/en/#search/text=${encodeURIComponent(keywords)}`;
+
+  try {
+    const { data } = await axios.get(searchUrl);
+    const $ = cheerio.load(data);
+
+    let references = [];
+    $('.search-result .search-result-title a').each((i, el) => {
+      const title = $(el).text().trim();
+      const relativeUrl = $(el).attr('href');
+      if (title && relativeUrl) {
+        references.push({
+          title,
+          url: `https://www.canlii.org${relativeUrl}`,
+        });
+      }
+    });
+
+    // For demo, limit to 5 references
+    return references.slice(0, 5);
+  } catch (error) {
+    console.error('Error scraping CanLII:', error.message);
+    return [];
+  }
+}
+
+module.exports = { findReferences };
+const { Configuration, OpenAIApi } = require('openai');
+
+// Load your OpenAI API key from .env
+const config = new Configuration({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+const openai = new OpenAIApi(config);
+
+/**
+ * Summarize the user’s legal question and references using OpenAI.
+ *
+ * @param {string} question - The user’s original question.
+ * @param {Array<{ title: string, url: string }>} references - The references from CanLII.
+ * @returns {Promise<string>}
+ */
+async function summarize(question, references) {
+  try {
+    const prompt = `
+The user asked a Canadian legal question: "${question}"
+
+We found these references from CanLII:
+${references.map((ref, i) => `${i+1}. ${ref.title}: ${ref.url}`).join('\n')}
+
+Please provide a concise, **non-legal-advice** style summary that is:
+1. Focused on Canadian law,
+2. Highlights relevant points from the references (if any),
+3. Clearly states disclaimers that this is informational only.
+4. Written in a professional, neutral tone.
+`;
+
+    const response = await openai.createCompletion({
+      model: 'text-davinci-003', 
+      prompt,
+      max_tokens: 450,
+      temperature: 0.2,
+    });
+
+    const summary = response.data.choices?.[0]?.text?.trim();
+    return summary || "No summary could be generated.";
+  } catch (error) {
+    console.error('Error from OpenAI API:', error);
+    return "Unable to summarize at this time.";
+  }
+}
+
+module.exports = { summarize };
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Canadian Legal Q&A</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+  <header>
+    <h1>Ask a Canadian Legal Question</h1>
+  </header>
+
+  <main>
+    <div class="question-container">
+      <textarea id="legalQuestion" placeholder="Type your question here..." rows="5"></textarea>
+      <button id="submitBtn">Get Answer</button>
+    </div>
+    <div id="resultContainer" class="result-container"></div>
+  </main>
+
+  <footer>
+    <p>
+      <strong>Disclaimer:</strong> The information provided is for general informational purposes only 
+      and does not constitute legal advice. For specific legal questions, please consult a qualified lawyer.
+    </p>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background-color: #fafafa;
+  color: #333;
+}
+
+header {
+  background-color: #004c8c; 
+  color: #fff;
+  padding: 1rem;
+  text-align: center;
+}
+
+main {
+  margin: 2rem auto;
+  max-width: 800px;
+  padding: 1rem;
+  background-color: #fff;
+  border-radius: 4px;
+}
+
+.question-container {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 1rem;
+}
+
+#legalQuestion {
+  width: 100%;
+  padding: 0.5rem;
+  font-size: 1rem;
+}
+
+#submitBtn {
+  margin-top: 0.5rem;
+  background-color: #004c8c;
+  color: #fff;
+  border: none;
+  padding: 0.75rem;
+  cursor: pointer;
+  font-size: 1rem;
+  border-radius: 4px;
+}
+
+#submitBtn:hover {
+  background-color: #003d73;
+}
+
+.result-container {
+  margin-top: 1rem;
+}
+
+.result-container h2 {
+  margin-bottom: 0.5rem;
+}
+
+footer {
+  text-align: center;
+  background-color: #f1f1f1;
+  padding: 1rem;
+  margin-top: 2rem;
+  font-size: 0.9rem;
+  color: #666;
+}
+document.getElementById('submitBtn').addEventListener('click', async () => {
+  const userQuestion = document.getElementById('legalQuestion').value.trim();
+  const resultContainer = document.getElementById('resultContainer');
+
+  if (!userQuestion) {
+    alert('Please enter a question.');
+    return;
+  }
+
+  // Clear previous results
+  resultContainer.innerHTML = '<p>Loading...</p>';
+
+  try {
+    const response = await fetch('/api/question', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: userQuestion }),
+    });
+    const data = await response.json();
+
+    if (data.error) {
+      resultContainer.innerHTML = `<p style="color:red;">Error: ${data.error}</p>`;
+      return;
+    }
+
+    let html = `<h2>Answer</h2><p>${data.answer}</p>`;
+    if (data.references && data.references.length > 0) {
+      html += `<h3>Relevant References from CanLII</h3><ul>`;
+      data.references.forEach((ref) => {
+        html += `<li><a href="${ref.url}" target="_blank">${ref.title}</a></li>`;
+      });
+      html += `</ul>`;
+    }
+
+    resultContainer.innerHTML = html;
+  } catch (err) {
+    console.error(err);
+    resultContainer.innerHTML = `<p style="color:red;">An error occurred while fetching the answer: ${err.message}</p>`;
+  }
+});
+# Use an official Node.js runtime as a parent image
+FROM node:16-alpine
+
+# Set the working directory
+WORKDIR /app
+
+# Copy the package.json and package-lock.json
+COPY package*.json ./
+
+# Install dependencies
+RUN npm install
+
+# Copy the rest of the project files
+COPY . .
+
+# Expose port 3000 for the container
+EXPOSE 3000
+
+# Define the command to run the app
+CMD ["npm", "start"]
