@@ -1,21 +1,4 @@
-canada-legal-qa/
-│
-├── .env                # Your environment file (OpenAI API key, etc.)
-├── Dockerfile          # For containerizing the app
-├── README.md           
-├── package.json
-├── package-lock.json
-├── server.js
-├── routes/
-│   └── question.js
-├── services/
-│   ├── canliiService.js
-│   └── openAIService.js
-└── frontend/
-    ├── index.html
-    ├── style.css
-    └── script.js
-{
+
   "name": "canada-legal-qa",
   "version": "1.0.0",
   "description": "A Canadian Legal Q&A prototype with OpenAI integration",
