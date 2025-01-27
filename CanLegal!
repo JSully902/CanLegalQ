@@ -344,3 +344,8 @@ EXPOSE 3000
 
 # Define the command to run the app
 CMD ["npm", "start"]
+npm install
+npm run start
+npm run dev   # if you have nodemon installed
+docker build -t canada-legal-qa .
+docker run -p 3000:3000 --env-file .env canada-legal-qa
